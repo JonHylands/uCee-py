@@ -1,33 +1,36 @@
 print("uCee.py")
 
-LED_PIN = 13;
+LED_PIN = 13
 
-RIGHT_RANGE_PIN = 23;
-LEFT_RANGE_PIN = 22;
-FRONT_RANGE_PIN = 21;
+RIGHT_RANGE_PIN = 23
+LEFT_RANGE_PIN = 22
+FRONT_RANGE_PIN = 21
 
-RIGHT_PROX_PIN = 20;
-LEFT_PROX_PIN = 6;
-FRONT_PROX_PIN = 17;
+RIGHT_PROX_PIN = 20
+LEFT_PROX_PIN = 6
+FRONT_PROX_PIN = 17
 
-RIGHT_ENCODER_A_PIN = 5;
-RIGHT_ENCODER_B_PIN = 4;
-LEFT_ENCODER_A_PIN = 3;
-LEFT_ENCODER_B_PIN = 2;
+RIGHT_ENCODER_A_PIN = 5
+RIGHT_ENCODER_B_PIN = 4
+LEFT_ENCODER_A_PIN = 3
+LEFT_ENCODER_B_PIN = 2
 
-LEFT_MOTOR_ENABLE_PIN = 12;
-LEFT_MOTOR_DIRECTION_PIN = 11;
-LEFT_MOTOR_PWM_PIN = 10;
-RIGHT_MOTOR_PWM_PIN = 9;
-RIGHT_MOTOR_DIRECTION_PIN = 8;
-RIGHT_MOTOR_ENABLE_PIN = 7;
+LEFT_MOTOR_ENABLE_PIN = 12
+LEFT_MOTOR_DIRECTION_PIN = 11
+LEFT_MOTOR_PWM_PIN = 10
+RIGHT_MOTOR_PWM_PIN = 9
+RIGHT_MOTOR_DIRECTION_PIN = 8
+RIGHT_MOTOR_ENABLE_PIN = 7
 
-RIGHT_MOTOR_CURRENT_PIN = 14;
-LEFT_MOTOR_CURRENT_PIN = 15;
+RIGHT_MOTOR_CURRENT_PIN = 14
+LEFT_MOTOR_CURRENT_PIN = 15
 
-VOLTAGE_CHECK_PIN = 16;
+VOLTAGE_CHECK_PIN = 16
 
 RANGE_THRESHOLD = 500
+
+FORWARD_SPEED = 1023
+TURN_AWAY_MODIFIER = 200
 
 
 def Delay(msec):
@@ -57,16 +60,16 @@ def setSpeed(leftSpeed, rightSpeed):
 		pyb.analogWrite(RIGHT_MOTOR_PWM_PIN, 1023 - rightSpeed)
 
 def MotorsFwd():
-	setSpeed(750, 750)
+	setSpeed(1023, 1023)
 
 def MotorsBwd():
 	setSpeed(-600, -600)
 
 def MotorsL():
-	setSpeed(-500, 500)
+	setSpeed(-800, 800)
 
 def MotorsR():
-	setSpeed(500, -500)
+	setSpeed(800, -800)
 
 def MotorsStop():
 	setSpeed(0, 0)
@@ -82,8 +85,10 @@ def InitMotors():
 	pyb.gpio(RIGHT_MOTOR_ENABLE_PIN, 1)
 
 def Roaming():
+	currentLeftSpeed = FORWARD_SPEED
+	currentRightSpeed = FORWARD_SPEED
 	while True:
-		MotorsFwd()
+		setSpeed(currentLeftSpeed, currentRightSpeed)
 		frontRange = ReadFrontRange()
 		if frontRange > RANGE_THRESHOLD:
 			if ReadLeftRange() > RANGE_THRESHOLD:
@@ -99,7 +104,13 @@ def Roaming():
 				Delay(100)
 				frontRange = ReadFrontRange()
 			Delay(250) # give it a little more time to turn
-			MotorsFwd()
+		if ReadLeftRange() > RANGE_THRESHOLD:
+			currentRightSpeed = FORWARD_SPEED - TURN_AWAY_MODIFIER
+		elif ReadRightRange() > RANGE_THRESHOLD:
+			currentLeftSpeed = FORWARD_SPEED - TURN_AWAY_MODIFIER
+		else:
+			currentLeftSpeed = FORWARD_SPEED
+			currentRightSpeed = FORWARD_SPEED
 		Delay(10)
 
 InitMotors()
