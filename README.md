@@ -1,8 +1,5 @@
 uCee
-==========
-
-MicroPython source for my uCee robot.
-
+====
 
 Description of files:
 ```
