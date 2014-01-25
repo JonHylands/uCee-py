@@ -1,0 +1,11 @@
+3 	- Left Motor Servo	min=1000 (bwd) max=2000 (fwd)
+4 	- Right Motor Servo	min=1000 (fwd) max=2000 (bwd)
+5 	- Pan Servo		min=1000 (looks right) max = 2000 (looks left)
+14 (A0)	- Analog Sensor		large value (> 400) = close smaller value = far away
+15 (A1) - Left Whisker
+16 (A1) - Right Whisker
+
+Need a 5V voltage regulator
+
+
+
