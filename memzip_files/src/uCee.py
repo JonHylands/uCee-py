@@ -27,7 +27,8 @@ LEFT_MOTOR_CURRENT_PIN = 15
 VOLTAGE_CHECK_PIN = 16
 VOLTAGE_FACTOR = 103.57
 
-RANGE_THRESHOLD = 6
+RANGE_THRESHOLD = 60
+RANGE_MAX = 1000
 
 FORWARD_SPEED = 1023
 TURN_AWAY_MODIFIER = 200
@@ -54,12 +55,12 @@ class RangeFinder:
 		distance = exactDistance
 		if self.proxDotPin == -1:
 			if distance > 200:
-				return -1
+				return RANGE_MAX
 			else:
 				return distance
 		proxDot = pyb.gpio(self.proxDotPin)
 		if (distance > 200) and proxDot:
-			return -1
+			return RANGE_MAX
 		if not proxDot:
 			distance = 55 - distance
 			if distance < 0:
@@ -174,13 +175,14 @@ class MicroCrawler:
 		self.heartbeat = HeartbeatLED(LED_PIN)
 		self.leftMotor = MotorDriver(LEFT_MOTOR_ENABLE_PIN, LEFT_MOTOR_DIRECTION_PIN, LEFT_MOTOR_PWM_PIN, LEFT_MOTOR_CURRENT_PIN)
 		self.rightMotor = MotorDriver(RIGHT_MOTOR_ENABLE_PIN, RIGHT_MOTOR_DIRECTION_PIN, RIGHT_MOTOR_PWM_PIN, RIGHT_MOTOR_CURRENT_PIN)
-		self.rightMotor.runReversed()
 
 	def roam(self):
+		self.heartbeat.update()
 		self.leftMotor.setSpeed(self.currentLeftSpeed)
 		self.rightMotor.setSpeed(self.currentRightSpeed)
 		frontRange = self.frontRangeFinder.getDistance()
 		if frontRange < RANGE_THRESHOLD:
+			print("Obstacle in front")
 			if self.leftRangeFinder.getDistance() < RANGE_THRESHOLD:
 				self.rightMotor.setSpeed(-self.currentRightSpeed)
 			elif self.rightRangeFinder.getDistance() < RANGE_THRESHOLD:
@@ -194,6 +196,7 @@ class MicroCrawler:
 				Delay(100)
 				frontRange =  self.frontRangeFinder.getDistance()
 			Delay(250) # give it a little more time to turn
+			print("Finished Obstacle")
 		if self.leftRangeFinder.getDistance() < RANGE_THRESHOLD:
 			self.currentRightSpeed = FORWARD_SPEED - TURN_AWAY_MODIFIER
 		elif self.rightRangeFinder.getDistance() < RANGE_THRESHOLD:
@@ -225,9 +228,9 @@ uCee = MicroCrawler()
 
 Delay(5000)
 print("uCee.py")
-
+pyb.gc()
+pyb.info()
 #uCee.checkVoltage()
 while True:
 	uCee.roam()
-	heartbeat.update()
 	Delay(10)
