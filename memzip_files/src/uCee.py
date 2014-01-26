@@ -1,3 +1,4 @@
+
 print("uCee.py")
 
 LED_PIN = 13
@@ -26,6 +27,7 @@ RIGHT_MOTOR_CURRENT_PIN = 14
 LEFT_MOTOR_CURRENT_PIN = 15
 
 VOLTAGE_CHECK_PIN = 16
+VOLTAGE_FACTOR = 103.57
 
 RANGE_THRESHOLD = 500
 
@@ -34,16 +36,22 @@ TURN_AWAY_MODIFIER = 200
 
 
 def Delay(msec):
-    pyb.delay(msec)
+	pyb.delay(msec)
 
-def ReadFrontRange():
-	return pyb.analogRead(FRONT_RANGE_PIN)
+class RangeFinder:
+	def __init__(self, pinNumber):
+		self.pin = pinNumber
+	def getRange():
+		return pyb.analogRead(self.pin)
 
-def ReadLeftRange():
-	return pyb.analogRead(LEFT_RANGE_PIN)
+class Led:
+	def __init__(self, pinNumber):
+		self.pin = pinNumber
+	def turnOn(self):
+		pyb.gpio(self.pin, 1)
+	def turnOff(self):
+		pyb.gpio(self.pin, 0)
 
-def ReadRightRange():
-	return pyb.analogRead(RIGHT_RANGE_PIN)
 
 def setSpeed(leftSpeed, rightSpeed):
 	if leftSpeed < 0:
@@ -84,16 +92,33 @@ def InitMotors():
 	pyb.gpio(LEFT_MOTOR_ENABLE_PIN, 1)
 	pyb.gpio(RIGHT_MOTOR_ENABLE_PIN, 1)
 
+def CheckVoltage():
+	value = 0
+	for index in range(1, 5):
+		value += pyb.analogRead(VOLTAGE_CHECK_PIN)
+	voltage = (value / 5) / VOLTAGE_FACTOR
+	if voltage < 6.1:
+		MotorsStop()
+		pyb.gpio(LED_PIN, 1)
+		Delay(10000)
+		print("Low voltage warning!")
+		print (voltage)
+		while True:
+			pyb.gpio(LED_PIN, 1)
+			Delay(100)
+			pyb.gpio(LED_PIN, 0)
+			Delay(100)
+
 def Roaming():
 	currentLeftSpeed = FORWARD_SPEED
 	currentRightSpeed = FORWARD_SPEED
 	while True:
 		setSpeed(currentLeftSpeed, currentRightSpeed)
-		frontRange = ReadFrontRange()
+		frontRange = frontRangeFinder.getRange()
 		if frontRange > RANGE_THRESHOLD:
-			if ReadLeftRange() > RANGE_THRESHOLD:
+			if leftRangeFinder.getRange() > RANGE_THRESHOLD:
 				MotorsR()
-			elif ReadRightRange() > RANGE_THRESHOLD:
+			elif rightRangeFinder.getRange() > RANGE_THRESHOLD:
 				MotorsL()
 			else:
 				if pyb.random(10) > 5:
@@ -102,11 +127,11 @@ def Roaming():
 					MotorsR()
 			while frontRange > RANGE_THRESHOLD:
 				Delay(100)
-				frontRange = ReadFrontRange()
+				frontRange =  frontRangeFinder.getRange()
 			Delay(250) # give it a little more time to turn
-		if ReadLeftRange() > RANGE_THRESHOLD:
+		if leftRangeFinder.getRange() > RANGE_THRESHOLD:
 			currentRightSpeed = FORWARD_SPEED - TURN_AWAY_MODIFIER
-		elif ReadRightRange() > RANGE_THRESHOLD:
+		elif rightRangeFinder.getRange() > RANGE_THRESHOLD:
 			currentLeftSpeed = FORWARD_SPEED - TURN_AWAY_MODIFIER
 		else:
 			currentLeftSpeed = FORWARD_SPEED
@@ -114,4 +139,15 @@ def Roaming():
 		Delay(10)
 
 InitMotors()
-Roaming()
+#CheckVoltage()
+#Roaming()
+
+frontRangeFinder = RangeFinder(FRONT_RANGE_PIN)
+leftRangeFinder = RangeFinder(LEFT_RANGE_PIN)
+rightRangeFinder = RangeFinder(RIGHT_RANGE_PIN)
+led = Led(LED_PIN)
+
+led.turnOn()
+Delay(5000)
+led.turnOff()
+
