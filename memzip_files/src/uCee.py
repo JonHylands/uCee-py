@@ -27,15 +27,22 @@ LEFT_MOTOR_CURRENT_PIN = 15
 VOLTAGE_CHECK_PIN = 16
 VOLTAGE_FACTOR = 103.57
 
-RANGE_THRESHOLD = 60
+FRONT_RANGE_OBSTACLE = 60
+SIDE_RANGE_OBSTACLE = 40
 RANGE_MAX = 1000
+OBSTACLE_TURN_TIME = 200 # extra time to continue turning past not seeing the obstacle anymore
 
-FORWARD_SPEED = 1023
-TURN_AWAY_MODIFIER = 200
+START_SPEED = 500
+MAX_SPEED = 1023
+TURN_SPEED = 800
+SPEED_INCREMENT = 25
 
 
 def Delay(msec):
 	pyb.delay(msec)
+
+def Log(aString):
+	print(aString)
 
 #================================================
 #
@@ -62,9 +69,7 @@ class RangeFinder:
 		if (distance > 200) and proxDot:
 			return RANGE_MAX
 		if not proxDot:
-			distance = 55 - distance
-			if distance < 0:
-				distance = 0
+			distance = max(0, 55 - distance)
 		return distance
 
 #================================================
@@ -161,14 +166,79 @@ class MotorDriver:
 
 #================================================
 #
+#		Class State
+#
+
+class FsmState:
+
+	def __init__(self, stateName, enterFunction, updateFunction, exitFunction):
+		self.userEnter = enterFunction
+		self.userUpdate = updateFunction
+		self.userExit = exitFunction
+		self.name = stateName
+
+	def enter(self):
+		self.startTimeMillis = pyb.millis()
+		if self.userEnter is not None:
+			self.userEnter()
+
+	def update(self):
+		if self.userUpdate is not None:
+			self.userUpdate()
+
+	def exit(self):
+		if self.userExit is not None:
+			self.userExit()
+
+	def elapsedTimeMillis(self):
+		return pyb.millis() - self.startTimeMillis
+
+	def getName(self):
+		return self.name
+
+#================================================
+#
+#		Class FiniteStateMachine
+#
+
+class FiniteStateMachine:
+
+	def __init__(self, startState):
+		self.currentState = startState
+		self.nextState = startState
+		self.needToTriggerEnter = True
+		self.cycleCount = 0
+
+	def transitionTo(self, newState):
+		self.nextState = newState
+
+	def getCycleCount(self):
+		return self.cycleCount
+
+	def getCurrentStateMillis(self):
+		return self.currentState.elapsedTimeMillis()
+
+	def update(self):
+		if self.needToTriggerEnter:
+			self.currentState.enter()
+			self.needToTriggerEnter = False
+		if self.currentState.getName() != self.nextState.getName():
+			self.currentState.exit()
+			self.currentState = self.nextState
+			self.currentState.enter()
+			self.cycleCount = 0
+		self.cycleCount += 1
+		self.currentState.update()
+
+#================================================
+#
 #		Class MicroCrawler
 #
 
 class MicroCrawler:
 
 	def __init__(self):
-		self.currentLeftSpeed = FORWARD_SPEED
-		self.currentRightSpeed = FORWARD_SPEED
+		self.currentSpeed = 0
 		self.frontRangeFinder = RangeFinder(FRONT_RANGE_PIN, -1)
 		self.leftRangeFinder = RangeFinder(LEFT_RANGE_PIN, -1)
 		self.rightRangeFinder = RangeFinder(RIGHT_RANGE_PIN, -1)
@@ -176,61 +246,112 @@ class MicroCrawler:
 		self.leftMotor = MotorDriver(LEFT_MOTOR_ENABLE_PIN, LEFT_MOTOR_DIRECTION_PIN, LEFT_MOTOR_PWM_PIN, LEFT_MOTOR_CURRENT_PIN)
 		self.rightMotor = MotorDriver(RIGHT_MOTOR_ENABLE_PIN, RIGHT_MOTOR_DIRECTION_PIN, RIGHT_MOTOR_PWM_PIN, RIGHT_MOTOR_CURRENT_PIN)
 
-	def roam(self):
-		self.heartbeat.update()
-		self.leftMotor.setSpeed(self.currentLeftSpeed)
-		self.rightMotor.setSpeed(self.currentRightSpeed)
-		frontRange = self.frontRangeFinder.getDistance()
-		if frontRange < RANGE_THRESHOLD:
-			print("Obstacle in front")
-			if self.leftRangeFinder.getDistance() < RANGE_THRESHOLD:
-				self.rightMotor.setSpeed(-self.currentRightSpeed)
-			elif self.rightRangeFinder.getDistance() < RANGE_THRESHOLD:
-				self.leftMotor.setSpeed(-self.currentLeftSpeed)
-			else:
-				if pyb.random(10) > 5:
-					self.leftMotor.setSpeed(-self.currentLeftSpeed)
-				else:
-					self.rightMotor.setSpeed(-self.currentRightSpeed)
-			while frontRange < RANGE_THRESHOLD:
-				Delay(100)
-				frontRange =  self.frontRangeFinder.getDistance()
-			Delay(250) # give it a little more time to turn
-			print("Finished Obstacle")
-		if self.leftRangeFinder.getDistance() < RANGE_THRESHOLD:
-			self.currentRightSpeed = FORWARD_SPEED - TURN_AWAY_MODIFIER
-		elif self.rightRangeFinder.getDistance() < RANGE_THRESHOLD:
-			self.currentLeftSpeed = FORWARD_SPEED - TURN_AWAY_MODIFIER
-		else:
-			self.currentLeftSpeed = FORWARD_SPEED
-			self.currentRightSpeed = FORWARD_SPEED
+		self.movingState = FsmState("moving", self.enterMovingState, self.handleMovingState, None)
+		self.obstacleAvoidanceState = FsmState("obstacle", self.enterObstacleAvoidanceState, self.handleObstacleAvoidanceState, None)
+		self.shutdownState = FsmState("shutdown", self.enterShutdownState, None, None)
+		self.stateMachine = FiniteStateMachine(self.movingState)
+
+		self.timer = Metro(100)
 
 	def checkVoltage(self):
 		value = 0
 		for index in range(1, 5):
 			value += pyb.analogRead(VOLTAGE_CHECK_PIN)
+			Delay(1)
 		voltage = (value / 5) / VOLTAGE_FACTOR
 		if voltage < 6.1:
 			print("Low voltage warning!")
 			print (voltage)
-			while True:
-				pyb.gpio(LED_PIN, 1)
-				Delay(100)
-				pyb.gpio(LED_PIN, 0)
-				Delay(100)
+			self.stateMachine.transitionTo(self.shutdownState)
+
+	def readSensors(self):
+		self.frontRangeDistance = self.frontRangeFinder.getDistance()
+		self.leftRangeDistance = self.leftRangeFinder.getDistance()
+		self.rightRangeDistance = self.rightRangeFinder.getDistance()
+		#self.checkVoltage()
+
+	def setSpeed(self, desiredSpeed, desiredTurnRate):
+		if desiredTurnRate == 0:
+			self.leftMotor.setSpeed(desiredSpeed)
+			self.rightMotor.setSpeed(desiredSpeed)
+		elif desiredTurnRate > 0:
+			self.leftMotor.setSpeed(desiredSpeed)
+			self.rightMotor.setSpeed(desiredSpeed - (desiredSpeed * desiredTurnRate))
+		else:
+			self.leftMotor.setSpeed(desiredSpeed + (desiredSpeed * desiredTurnRate))
+			self.rightMotor.setSpeed(desiredSpeed)
+
+	def enterMovingState(self):
+		Log("Entering MovingState")
+		self.currentSpeed = START_SPEED
+		self.currentTurnRate = 0.0
+
+	def handleMovingState(self):
+		if self.currentSpeed < MAX_SPEED:
+			self.currentSpeed = max(MAX_SPEED, self.currentSpeed + SPEED_INCREMENT)
+		self.setSpeed(self.currentSpeed, self.currentTurnRate)
+		if self.frontRangeDistance < FRONT_RANGE_OBSTACLE:
+			self.stateMachine.transitionTo(self.obstacleAvoidanceState)
+		elif self.leftRangeDistance < SIDE_RANGE_OBSTACLE:
+			self.currentTurnRate = 0.25
+		elif self.rightRangeDistance < SIDE_RANGE_OBSTACLE:
+			self.currentTurnRate = -0.25
+		else:
+			self.currentTurnRate = 0.0
+
+	def enterObstacleAvoidanceState(self):
+		Log('Entering ObstacleAvoidanceState')
+		self.setSpeed(0, 0)
+		self.currentSpeed = TURN_SPEED
+		if (self.leftRangeDistance < SIDE_RANGE_OBSTACLE) and (self.rightRangeDistance < SIDE_RANGE_OBSTACLE):
+			Log('Obstacles on both sides')
+			if pyb.random(10) > 5:
+				self.currentTurnRate = 2
+			else:
+				self.currentTurnRate = -2
+		elif self.leftRangeDistance < SIDE_RANGE_OBSTACLE:
+			Log('Obstacle on left side')
+			self.currentTurnRate = 2
+		elif self.rightRangeDistance < SIDE_RANGE_OBSTACLE:
+			Log('Obstacle on right side')
+			self.currentTurnRate = -2
+		else: #nothing on either side, so pick a side at random
+			Log('Only front obstacle')
+			if pyb.random(10) > 5:
+				self.currentTurnRate = 2
+			else:
+				self.currentTurnRate = -2
+		self.exitObstacleStateTime = 0
+
+	def handleObstacleAvoidanceState(self):
+		self.setSpeed(self.currentSpeed, self.currentTurnRate)
+		if self.frontRangeDistance >= FRONT_RANGE_OBSTACLE and self.exitObstacleStateTime == 0:
+			self.exitObstacleStateTime = pyb.millis() + OBSTACLE_TURN_TIME
+		if self.frontRangeDistance < FRONT_RANGE_OBSTACLE:
+			self.exitObstacleStateTime = 0
+		if self.exitObstacleStateTime > 0 and pyb.millis() >= self.exitObstacleStateTime:
+			self.stateMachine.transitionTo(self.movingState)
+
+	def enterShutdownState(self):
+		self.setSpeed(0, 0)
+
+	def update(self):
+		self.heartbeat.update()
+		if self.timer.check():
+			self.readSensors()
+			self.stateMachine.update()
 
 #================================================
 #
 #		Main Program
 #
 
-uCee = MicroCrawler()
+Delay(5000) # enough time to open a serial terminal
+Log("uCee.py")
 
-Delay(5000)
-print("uCee.py")
+uCee = MicroCrawler()
 pyb.gc()
 pyb.info()
-#uCee.checkVoltage()
+
 while True:
-	uCee.roam()
-	Delay(10)
+	uCee.update()
