@@ -1,6 +1,4 @@
 
-print("uCee.py")
-
 LED_PIN = 13
 
 RIGHT_RANGE_PIN = 23
@@ -29,7 +27,7 @@ LEFT_MOTOR_CURRENT_PIN = 15
 VOLTAGE_CHECK_PIN = 16
 VOLTAGE_FACTOR = 103.57
 
-RANGE_THRESHOLD = 500
+RANGE_THRESHOLD = 6
 
 FORWARD_SPEED = 1023
 TURN_AWAY_MODIFIER = 200
@@ -38,116 +36,198 @@ TURN_AWAY_MODIFIER = 200
 def Delay(msec):
 	pyb.delay(msec)
 
+#================================================
+#
+#		Class RangeFinder
+#
+
 class RangeFinder:
-	def __init__(self, pinNumber):
-		self.pin = pinNumber
-	def getRange():
-		return pyb.analogRead(self.pin)
 
-class Led:
-	def __init__(self, pinNumber):
-		self.pin = pinNumber
-	def turnOn(self):
-		pyb.gpio(self.pin, 1)
-	def turnOff(self):
-		pyb.gpio(self.pin, 0)
+	def __init__(self, rangePinNumber, proxDotPinNumber):
+		self.rangePin = rangePinNumber
+		self.proxDotPin = proxDotPinNumber
 
+	def getDistance(self):
+		value = pyb.analogRead(self.rangePin)
+		voltage = value * 0.0032258 # 0-1023 -> 0-3.3 volts
+		exactDistance = 100 * ((1.25 / voltage) - 0.15)
+		distance = exactDistance
+		if self.proxDotPin == -1:
+			if distance > 200:
+				return -1
+			else:
+				return distance
+		proxDot = pyb.gpio(self.proxDotPin)
+		if (distance > 200) and proxDot:
+			return -1
+		if not proxDot:
+			distance = 55 - distance
+			if distance < 0:
+				distance = 0
+		return distance
 
-def setSpeed(leftSpeed, rightSpeed):
-	if leftSpeed < 0:
-		pyb.gpio(LEFT_MOTOR_DIRECTION_PIN, 0)
-		pyb.analogWrite(LEFT_MOTOR_PWM_PIN, -leftSpeed)
-	else:
-		pyb.gpio(LEFT_MOTOR_DIRECTION_PIN, 1)
-		pyb.analogWrite(LEFT_MOTOR_PWM_PIN, 1023 - leftSpeed)
-	if rightSpeed < 0:
-		pyb.gpio(RIGHT_MOTOR_DIRECTION_PIN, 0)
-		pyb.analogWrite(RIGHT_MOTOR_PWM_PIN, -rightSpeed)
-	else:
-		pyb.gpio(RIGHT_MOTOR_DIRECTION_PIN, 1)
-		pyb.analogWrite(RIGHT_MOTOR_PWM_PIN, 1023 - rightSpeed)
+#================================================
+#
+#		Class Metro
+#
 
-def MotorsFwd():
-	setSpeed(1023, 1023)
+class Metro:
 
-def MotorsBwd():
-	setSpeed(-600, -600)
+	def __init__(self, interval_millis):
+		self.interval = interval_millis
+		self.previous = pyb.millis()
 
-def MotorsL():
-	setSpeed(-800, 800)
+	def setInterval(self, interval_millis):
+		self.interval = interval_millis
 
-def MotorsR():
-	setSpeed(800, -800)
+	def check(self):
+		now = pyb.millis()
+		if self.interval == 0:
+			self.previous = now
+			return True
+		if (now - self.previous) >= self.interval:
+			self.previous = now
+			return True
+		return False
 
-def MotorsStop():
-	setSpeed(0, 0)
+	def reset(self):
+		self.previous = pyb.millis()
 
-def InitMotors():
-	pyb.gpio(LEFT_MOTOR_ENABLE_PIN, 0)
-	pyb.gpio(RIGHT_MOTOR_ENABLE_PIN, 0)
-	pyb.analogWriteResolution(10)
-	pyb.analogWriteFrequency(LEFT_MOTOR_PWM_PIN, 10000)
-	pyb.analogWriteFrequency(RIGHT_MOTOR_PWM_PIN, 10000)
-	MotorsStop();
-	pyb.gpio(LEFT_MOTOR_ENABLE_PIN, 1)
-	pyb.gpio(RIGHT_MOTOR_ENABLE_PIN, 1)
+#================================================
+#
+#		Class HeartbeatLED
+#
 
-def CheckVoltage():
-	value = 0
-	for index in range(1, 5):
-		value += pyb.analogRead(VOLTAGE_CHECK_PIN)
-	voltage = (value / 5) / VOLTAGE_FACTOR
-	if voltage < 6.1:
-		MotorsStop()
-		pyb.gpio(LED_PIN, 1)
-		Delay(10000)
-		print("Low voltage warning!")
-		print (voltage)
-		while True:
-			pyb.gpio(LED_PIN, 1)
-			Delay(100)
-			pyb.gpio(LED_PIN, 0)
-			Delay(100)
+class HeartbeatLED:
 
-def Roaming():
-	currentLeftSpeed = FORWARD_SPEED
-	currentRightSpeed = FORWARD_SPEED
-	while True:
-		setSpeed(currentLeftSpeed, currentRightSpeed)
-		frontRange = frontRangeFinder.getRange()
-		if frontRange > RANGE_THRESHOLD:
-			if leftRangeFinder.getRange() > RANGE_THRESHOLD:
-				MotorsR()
-			elif rightRangeFinder.getRange() > RANGE_THRESHOLD:
-				MotorsL()
+	def __init__(self, ledPinNumber):
+		self.ledPin = ledPinNumber
+		self.timer = Metro(0)
+		self.set(100, 900)
+
+	def set(self, newOnInterval, newOffInterval):
+		self.onInterval = newOnInterval
+		self.offInterval = newOffInterval
+		self.timer.setInterval(self.offInterval)
+		self.ledState = 0
+		pyb.gpio(self.ledPin, self.ledState)
+
+	def update(self):
+		if self.timer.check():
+			if self.ledState:
+				self.ledState = 0
+				if self.onInterval != self.offInterval:
+					self.timer.setInterval(self.offInterval)
+			else:
+				self.ledState = 1
+				if self.onInterval != self.offInterval:
+					self.timer.setInterval(self.onInterval)
+			pyb.gpio(self.ledPin, self.ledState)
+
+#================================================
+#
+#		Class MotorDriver
+#
+
+class MotorDriver:
+
+	def __init__(self, enablePinNumber, directionPinNumber, pwmPinNumber, currentPinNumber):
+		self.enablePin = enablePinNumber
+		self.directionPin = directionPinNumber
+		self.pwmPin = pwmPinNumber
+		self.currentPin = currentPinNumber
+		self.directionFactor = 1
+		pyb.analogWriteResolution(10)
+		pyb.analogWriteFrequency(self.pwmPin, 10000)
+		pyb.gpio(self.enablePin, 0)
+		self.setSpeed(0)
+		pyb.gpio(self.enablePin, 1)
+
+	def runReversed(self):
+		self.directionFactor = -1
+
+	def setSpeed(self, speed):
+		actualSpeed = speed * self.directionFactor
+		if actualSpeed < 0:
+			pyb.gpio(self.directionPin, 0)
+			pyb.analogWrite(self.pwmPin, -actualSpeed)
+		else:
+			pyb.gpio(self.directionPin, 1)
+			pyb.analogWrite(self.pwmPin, 1023 - actualSpeed)
+
+	def getCurrent(self):
+		return pyb.analogRead(self.currentPin)
+
+#================================================
+#
+#		Class MicroCrawler
+#
+
+class MicroCrawler:
+
+	def __init__(self):
+		self.currentLeftSpeed = FORWARD_SPEED
+		self.currentRightSpeed = FORWARD_SPEED
+		self.frontRangeFinder = RangeFinder(FRONT_RANGE_PIN, -1)
+		self.leftRangeFinder = RangeFinder(LEFT_RANGE_PIN, -1)
+		self.rightRangeFinder = RangeFinder(RIGHT_RANGE_PIN, -1)
+		self.heartbeat = HeartbeatLED(LED_PIN)
+		self.leftMotor = MotorDriver(LEFT_MOTOR_ENABLE_PIN, LEFT_MOTOR_DIRECTION_PIN, LEFT_MOTOR_PWM_PIN, LEFT_MOTOR_CURRENT_PIN)
+		self.rightMotor = MotorDriver(RIGHT_MOTOR_ENABLE_PIN, RIGHT_MOTOR_DIRECTION_PIN, RIGHT_MOTOR_PWM_PIN, RIGHT_MOTOR_CURRENT_PIN)
+		self.rightMotor.runReversed()
+
+	def roam(self):
+		self.leftMotor.setSpeed(self.currentLeftSpeed)
+		self.rightMotor.setSpeed(self.currentRightSpeed)
+		frontRange = self.frontRangeFinder.getDistance()
+		if frontRange < RANGE_THRESHOLD:
+			if self.leftRangeFinder.getDistance() < RANGE_THRESHOLD:
+				self.rightMotor.setSpeed(-self.currentRightSpeed)
+			elif self.rightRangeFinder.getDistance() < RANGE_THRESHOLD:
+				self.leftMotor.setSpeed(-self.currentLeftSpeed)
 			else:
 				if pyb.random(10) > 5:
-					MotorsL()
+					self.leftMotor.setSpeed(-self.currentLeftSpeed)
 				else:
-					MotorsR()
-			while frontRange > RANGE_THRESHOLD:
+					self.rightMotor.setSpeed(-self.currentRightSpeed)
+			while frontRange < RANGE_THRESHOLD:
 				Delay(100)
-				frontRange =  frontRangeFinder.getRange()
+				frontRange =  self.frontRangeFinder.getDistance()
 			Delay(250) # give it a little more time to turn
-		if leftRangeFinder.getRange() > RANGE_THRESHOLD:
-			currentRightSpeed = FORWARD_SPEED - TURN_AWAY_MODIFIER
-		elif rightRangeFinder.getRange() > RANGE_THRESHOLD:
-			currentLeftSpeed = FORWARD_SPEED - TURN_AWAY_MODIFIER
+		if self.leftRangeFinder.getDistance() < RANGE_THRESHOLD:
+			self.currentRightSpeed = FORWARD_SPEED - TURN_AWAY_MODIFIER
+		elif self.rightRangeFinder.getDistance() < RANGE_THRESHOLD:
+			self.currentLeftSpeed = FORWARD_SPEED - TURN_AWAY_MODIFIER
 		else:
-			currentLeftSpeed = FORWARD_SPEED
-			currentRightSpeed = FORWARD_SPEED
-		Delay(10)
+			self.currentLeftSpeed = FORWARD_SPEED
+			self.currentRightSpeed = FORWARD_SPEED
 
-InitMotors()
-#CheckVoltage()
-#Roaming()
+	def checkVoltage(self):
+		value = 0
+		for index in range(1, 5):
+			value += pyb.analogRead(VOLTAGE_CHECK_PIN)
+		voltage = (value / 5) / VOLTAGE_FACTOR
+		if voltage < 6.1:
+			print("Low voltage warning!")
+			print (voltage)
+			while True:
+				pyb.gpio(LED_PIN, 1)
+				Delay(100)
+				pyb.gpio(LED_PIN, 0)
+				Delay(100)
 
-frontRangeFinder = RangeFinder(FRONT_RANGE_PIN)
-leftRangeFinder = RangeFinder(LEFT_RANGE_PIN)
-rightRangeFinder = RangeFinder(RIGHT_RANGE_PIN)
-led = Led(LED_PIN)
+#================================================
+#
+#		Main Program
+#
 
-led.turnOn()
+uCee = MicroCrawler()
+
 Delay(5000)
-led.turnOff()
+print("uCee.py")
 
+#uCee.checkVoltage()
+while True:
+	uCee.roam()
+	heartbeat.update()
+	Delay(10)
