@@ -27,10 +27,10 @@ LEFT_MOTOR_CURRENT_PIN = 15
 VOLTAGE_CHECK_PIN = 16
 VOLTAGE_FACTOR = 103.57
 
-FRONT_RANGE_OBSTACLE = 60
-SIDE_RANGE_OBSTACLE = 40
+FRONT_RANGE_OBSTACLE = 120
+SIDE_RANGE_OBSTACLE = 90
 RANGE_MAX = 1000
-OBSTACLE_TURN_TIME = 200 # extra time to continue turning past not seeing the obstacle anymore
+OBSTACLE_TURN_TIME = 50 # extra time to continue turning past not seeing the obstacle anymore
 
 START_SPEED = 500
 MAX_SPEED = 1023
@@ -169,7 +169,7 @@ class MotorDriver:
 #		Class State
 #
 
-class FsmState:
+class State:
 
 	def __init__(self, stateName, enterFunction, updateFunction, exitFunction):
 		self.userEnter = enterFunction
@@ -246,9 +246,9 @@ class MicroCrawler:
 		self.leftMotor = MotorDriver(LEFT_MOTOR_ENABLE_PIN, LEFT_MOTOR_DIRECTION_PIN, LEFT_MOTOR_PWM_PIN, LEFT_MOTOR_CURRENT_PIN)
 		self.rightMotor = MotorDriver(RIGHT_MOTOR_ENABLE_PIN, RIGHT_MOTOR_DIRECTION_PIN, RIGHT_MOTOR_PWM_PIN, RIGHT_MOTOR_CURRENT_PIN)
 
-		self.movingState = FsmState("moving", self.enterMovingState, self.handleMovingState, None)
-		self.obstacleAvoidanceState = FsmState("obstacle", self.enterObstacleAvoidanceState, self.handleObstacleAvoidanceState, None)
-		self.shutdownState = FsmState("shutdown", self.enterShutdownState, None, None)
+		self.movingState = State("moving", self.enterMovingState, self.handleMovingState, None)
+		self.obstacleAvoidanceState = State("obstacle", self.enterObstacleAvoidanceState, self.handleObstacleAvoidanceState, None)
+		self.shutdownState = State("shutdown", self.enterShutdownState, None, None)
 		self.stateMachine = FiniteStateMachine(self.movingState)
 
 		self.timer = Metro(100)
@@ -346,8 +346,21 @@ class MicroCrawler:
 #		Main Program
 #
 
-Delay(5000) # enough time to open a serial terminal
-Log("uCee.py")
+# delay long enough to open a serial terminal
+
+Log("Startup delay")
+heartbeat = HeartbeatLED(LED_PIN)
+heartbeat.set(100, 100)
+delayTimer = Metro(3000)
+while not delayTimer.check():
+	heartbeat.update()
+
+heartbeat = None
+delayTimer = None
+pyb.gc()
+
+pyb.gpio(LED_PIN, 0)
+Log("uCee.py starting")
 
 uCee = MicroCrawler()
 pyb.gc()
